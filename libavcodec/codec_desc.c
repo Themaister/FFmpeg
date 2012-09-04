@@ -611,6 +611,13 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .props     = AV_CODEC_PROP_LOSSLESS,
     },
     {
+        .id        = AV_CODEC_ID_RMV,
+        .type      = AVMEDIA_TYPE_VIDEO,
+        .name      = "rmv",
+        .long_name = NULL_IF_CONFIG_SMALL("Retro Motion Video"),
+        .props     = AV_CODEC_PROP_LOSSLESS,
+    },
+    {
         .id        = AV_CODEC_ID_AVS,
         .type      = AVMEDIA_TYPE_VIDEO,
         .name      = "avs",
