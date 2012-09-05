@@ -140,7 +140,7 @@ static int decode_intra_plane(RmvContext *c, uint8_t *out_buf, int out_stride, c
 static int rmv_decode_intra(RmvContext *c, const uint8_t *buffer)
 {
    int buffer_used;
-   av_log(c->avctx, AV_LOG_INFO, "Decoding I-frame.\n");
+   //av_log(c->avctx, AV_LOG_INFO, "Decoding I-frame.\n");
 
    buffer_used = 0;
    for (int i = 0; i < c->planes_used; i++)
@@ -171,12 +171,12 @@ static int rmv_decode_intra(RmvContext *c, const uint8_t *buffer)
       if (used < 0)
          return -1;
 
-      av_log(c->avctx, AV_LOG_INFO, "Intra coded size: %d\n", 6 + used + 1);
+      //av_log(c->avctx, AV_LOG_INFO, "Intra coded size: %d\n", 6 + used + 1);
 
       buffer_used += used;
       buffer      += used;
 
-      av_log(c->avctx, AV_LOG_INFO, "Expected intra size: %u\n", size);
+      //av_log(c->avctx, AV_LOG_INFO, "Expected intra size: %u\n", size);
 
       magic = *buffer++;
       if (magic != 'E') // Another magic check.
@@ -273,7 +273,7 @@ static int decode_inter_plane(RmvContext *c, uint8_t *out_buf, int out_stride, c
 static int rmv_decode_inter(RmvContext *c, const uint8_t *buffer, int block_size)
 {
    int buffer_used = 0;
-   av_log(c->avctx, AV_LOG_INFO, "Decoding P-frame.\n");
+   //av_log(c->avctx, AV_LOG_INFO, "Decoding P-frame.\n");
 
    for (int i = 0; i < c->planes_used; i++)
    {
@@ -345,7 +345,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPac
    pix_type   = *buf++;
    block_size = *buf++;
 
-   av_log(avctx, AV_LOG_INFO, "Frame type = %d, Pix type = %d, Block size = %d\n", frame_type, pix_type, block_size);
+   //av_log(avctx, AV_LOG_INFO, "Frame type = %d, Pix type = %d, Block size = %d\n", frame_type, pix_type, block_size);
 
    if (pix_type != RMV_PIX_FMT_GBRP)
    {
@@ -380,7 +380,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPac
          return AVERROR(EINVAL);
    }
 
-   av_log(avctx, AV_LOG_INFO, "Decoded %d bytes from %d packet bytes.\n", (int)(buf - avpkt->data), avpkt->size);
+   //av_log(avctx, AV_LOG_INFO, "Decoded %d bytes from %d packet bytes.\n", (int)(buf - avpkt->data), avpkt->size);
 
    copy_frame_internal(c->planes, c->pic.data,
          c->width, c->height,
@@ -436,9 +436,7 @@ static av_cold int decode_end(AVCodecContext *avctx)
    RmvContext *c = avctx->priv_data;
 
    if (c->pic.data[0])
-   {
       avctx->release_buffer(avctx, &c->pic);
-   }
 
    for (int i = 0; i < c->planes_used; i++)
    {

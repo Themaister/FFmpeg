@@ -281,7 +281,7 @@ out:
          c->pred_error++;
          mv[0] = mv_x;
          mv[1] = mv_y;
-#if 1
+#if 0
          mv[2] = RMV_BLOCK_DIRECT; // Just bang out all 128 pixels for now :(
 
          for (int h = 0; h < RMV_BLOCK_SIZE; h++, ref += c->plane_stride)
@@ -373,11 +373,11 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
 
    interleave_frame_bgr24(c, c->planes_prev, p->data[0], c->avctx->width, c->avctx->height, p->linesize[0]);
 
-   av_log(c->avctx, AV_LOG_INFO, "Perfect: %d, Error: %d, Packet size: %d\n",
-         c->pred_perfect, c->pred_error, (int)(c->comp_ptr - c->comp_buf));
+   //av_log(c->avctx, AV_LOG_INFO, "Perfect: %d, Error: %d, Packet size: %d\n",
+   //      c->pred_perfect, c->pred_error, (int)(c->comp_ptr - c->comp_buf));
 
-   av_log(c->avctx, AV_LOG_INFO, "Estimated size: %d\n",
-         6 + 2 * 3 + (c->avctx->width * c->avctx->height) / (RMV_BLOCK_SIZE * RMV_BLOCK_SIZE) * 3 * 3 + RMV_BLOCK_SIZE * RMV_BLOCK_SIZE * c->pred_error);
+   //av_log(c->avctx, AV_LOG_INFO, "Estimated size: %d\n",
+   //      6 + 2 * 3 + (c->avctx->width * c->avctx->height) / (RMV_BLOCK_SIZE * RMV_BLOCK_SIZE) * 3 * 3 + RMV_BLOCK_SIZE * RMV_BLOCK_SIZE * c->pred_error);
 
    if (keyframe)
       pkt->flags |= AV_PKT_FLAG_KEY;
@@ -433,6 +433,9 @@ static av_cold int encode_init(AVCodecContext *avctx)
          av_log(avctx, AV_LOG_ERROR, "Can't allocate plane buffers.\n");
          return AVERROR(ENOMEM);
       }
+
+      memset(c->planes[i], c->plane_stride, c->full_height);
+      memset(c->planes_prev[i], c->plane_stride, c->full_height);
    }
 
    c->comp_size = 4 * c->plane_stride * c->full_height; // Be conservative.
@@ -441,6 +444,8 @@ static av_cold int encode_init(AVCodecContext *avctx)
       av_log(avctx, AV_LOG_ERROR, "Can't allocate compression buffer.\n");
       return AVERROR(ENOMEM);
    }
+
+   memset(c->comp_buf, 0, c->comp_size);
 
    avctx->coded_frame = &c->pic;
 
