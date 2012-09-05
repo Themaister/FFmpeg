@@ -139,11 +139,14 @@ static int decode_intra_plane(RmvContext *c, uint8_t *out_buf, int out_stride, c
 
 static int rmv_decode_intra(RmvContext *c, const uint8_t *buffer)
 {
+   int buffer_used;
    av_log(c->avctx, AV_LOG_INFO, "Decoding I-frame.\n");
 
-   int buffer_used = 0;
+   buffer_used = 0;
    for (int i = 0; i < c->planes_used; i++)
    {
+      uint8_t *out_buf;
+      int used, out_stride;
       uint8_t magic = *buffer++;
       uint8_t pred  = *buffer++;
       uint32_t size = *buffer++;
@@ -161,10 +164,10 @@ static int rmv_decode_intra(RmvContext *c, const uint8_t *buffer)
       if (pred != RMV_INTRA_PRED_UP_RLE) // Only supported intra prediction type yet.
          return -1;
 
-      uint8_t *out_buf = c->pic.data[i];
-      int out_stride   = c->pic.linesize[i];
+      out_buf    = c->pic.data[i];
+      out_stride = c->pic.linesize[i];
 
-      int used = decode_intra_plane(c, out_buf, out_stride, buffer);
+      used = decode_intra_plane(c, out_buf, out_stride, buffer);
       if (used < 0)
          return -1;
 
@@ -248,6 +251,14 @@ static int decode_inter_plane(RmvContext *c, uint8_t *out_buf, int out_stride, c
                for (int w = 0; w < block_size; w++)
                   dst[w] = src[w] + *blocks++; 
          }
+         else if (mv_flags & RMV_BLOCK_DIRECT)
+         {
+            uint8_t *dst = out_buf + x + y * out_stride;
+
+            for (int h = 0; h < block_size; h++, dst += out_stride)
+               for (int w = 0; w < block_size; w++)
+                  dst[w] = *blocks++; 
+         }
          else
          {
             av_log(c->avctx, AV_LOG_ERROR, "Block format not supported.\n");
@@ -261,21 +272,22 @@ static int decode_inter_plane(RmvContext *c, uint8_t *out_buf, int out_stride, c
 
 static int rmv_decode_inter(RmvContext *c, const uint8_t *buffer, int block_size)
 {
-   av_log(c->avctx, AV_LOG_INFO, "Decoding P-frame.\n");
-
    int buffer_used = 0;
+   av_log(c->avctx, AV_LOG_INFO, "Decoding P-frame.\n");
 
    for (int i = 0; i < c->planes_used; i++)
    {
+      uint8_t *out_buf;
+      int used, out_stride;
       uint8_t magic = *buffer++;
       if (magic != 'P')
          return -1;
       buffer_used++;
 
-      uint8_t *out_buf = c->pic.data[i];
-      int out_stride   = c->pic.linesize[i];
+      out_buf    = c->pic.data[i];
+      out_stride = c->pic.linesize[i];
 
-      int used = decode_inter_plane(c, out_buf, out_stride, buffer, c->planes[i], block_size);
+      used = decode_inter_plane(c, out_buf, out_stride, buffer, c->planes[i], block_size);
       if (used < 0)
          return -1;
 
@@ -307,27 +319,19 @@ static void copy_frame_internal(uint8_t **planes, uint8_t **in_planes,
 
 static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPacket *avpkt)
 {
+   uint8_t frame_type, pix_type, block_size;
+   int ret = 0;
    const uint8_t *buf = avpkt->data;
    const uint8_t buf_size = avpkt->size;
 
    RmvContext *c = avctx->priv_data;
 
-   if (c->pic.data[0])
-      avctx->release_buffer(avctx, &c->pic);
-
-   c->pic.reference = 3;
-   c->pic.buffer_hints = FF_BUFFER_HINTS_VALID;
-   int ret = avctx->get_buffer(avctx, &c->pic);
-   if (ret < 0)
-   {
-      av_log(avctx, AV_LOG_ERROR, "get_buffer() failed.\n");
-      return ret;
-   }
-
    if (buf_size < 6)
    {
-      av_log(avctx, AV_LOG_ERROR, "invalid packet.\n");
-      return AVERROR(EINVAL);
+      av_log(avctx, AV_LOG_ERROR, "invalid packet (got size: %d).\n", buf_size);
+      *data_size      = sizeof(AVFrame);
+      *(AVFrame*)data = c->pic;
+      return 0;
    }
 
    if (memcmp(buf, "RMV", 3))
@@ -337,9 +341,9 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPac
    }
    buf += 3;
 
-   uint8_t frame_type = *buf++;
-   uint8_t pix_type   = *buf++;
-   uint8_t block_size = *buf++;
+   frame_type = *buf++;
+   pix_type   = *buf++;
+   block_size = *buf++;
 
    av_log(avctx, AV_LOG_INFO, "Frame type = %d, Pix type = %d, Block size = %d\n", frame_type, pix_type, block_size);
 
@@ -376,6 +380,8 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPac
          return AVERROR(EINVAL);
    }
 
+   av_log(avctx, AV_LOG_INFO, "Decoded %d bytes from %d packet bytes.\n", (int)(buf - avpkt->data), avpkt->size);
+
    copy_frame_internal(c->planes, c->pic.data,
          c->width, c->height,
          c->plane_stride, c->pic.linesize,
@@ -389,6 +395,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPac
 
 static av_cold int decode_init(AVCodecContext *avctx)
 {
+   int ret;
    RmvContext *c = avctx->priv_data;
 
    c->avctx  = avctx;
@@ -410,6 +417,15 @@ static av_cold int decode_init(AVCodecContext *avctx)
          av_log(avctx, AV_LOG_ERROR, "failed to allocate memory for codec.\n");
          return AVERROR(ENOMEM);
       }
+
+      memset(c->planes[i], 0, c->plane_stride * c->full_height);
+   }
+
+   ret = avctx->get_buffer(avctx, &c->pic);
+   if (ret < 0)
+   {
+      av_log(avctx, AV_LOG_ERROR, "get_buffer() failed.\n");
+      return ret;
    }
 
    return 0;

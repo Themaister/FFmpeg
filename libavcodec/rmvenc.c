@@ -77,10 +77,13 @@ static void interleave_frame_bgr24(RmvEncContext *c, uint8_t **planes, const uin
 
 static void encode_intra_plane(RmvEncContext *c, const uint8_t *plane, uint8_t *plane_buf)
 {
+   int i, len;
+   size_t size;
    uint8_t *rle_buffer = plane_buf;
    int width  = c->avctx->width;
    int height = c->avctx->height;
    int stride = c->plane_stride;
+   uint8_t *size_buf;
 
    uint8_t *init_comp_ptr = c->comp_ptr;
 
@@ -88,7 +91,7 @@ static void encode_intra_plane(RmvEncContext *c, const uint8_t *plane, uint8_t *
    *c->comp_ptr++ = RMV_INTRA_PRED_UP_RLE;
 
    // Reserve 4 bytes to use later for intra plane size encoding.
-   uint8_t *size_buf = c->comp_ptr;
+   size_buf = c->comp_ptr;
    c->comp_ptr      += 4;
 
    // Very simple prediction. Assume that each pixel is equal to pixel above. Encode error.
@@ -105,8 +108,8 @@ static void encode_intra_plane(RmvEncContext *c, const uint8_t *plane, uint8_t *
       for (int w = 0; w < width; w++)
          plane_buf[w] = plane[w] - plane[w - stride];
 
-   int i = 0;
-   int len = height * width;
+   i = 0;
+   len = height * width;
 
    // Simple RLE encoding.
    // A bunch of zeros after each other are encoded as number of zeros with MSB set to 0.
@@ -144,7 +147,7 @@ static void encode_intra_plane(RmvEncContext *c, const uint8_t *plane, uint8_t *
 
    *c->comp_ptr++ = 'E';
 
-   size_t size = c->comp_ptr - init_comp_ptr; 
+   size = c->comp_ptr - init_comp_ptr; 
    *size_buf++ = (size >>  0) & 0xff;
    *size_buf++ = (size >>  8) & 0xff;
    *size_buf++ = (size >> 16) & 0xff;
@@ -211,8 +214,11 @@ static int block_sad(const uint8_t *ref, const uint8_t *ref_prev, int stride)
 static int encode_inter_block(RmvEncContext *c, uint8_t *mv, uint8_t *comp,
       int bx, int by, const uint8_t *cur, const uint8_t *prev)
 {
+   const uint8_t *ref_prev;
    int x = bx * RMV_BLOCK_SIZE;
    int y = by * RMV_BLOCK_SIZE;
+   int sad;
+   int sx, sy;
 
    int min_sy = FFMAX(y - c->me_range, 0);
    int max_sy = FFMIN(y + c->me_range, c->full_height - RMV_BLOCK_SIZE);
@@ -237,16 +243,16 @@ static int encode_inter_block(RmvEncContext *c, uint8_t *mv, uint8_t *comp,
       int min_sad = block_sad(ref, prev + x + y * c->plane_stride, c->plane_stride);
       if (min_sad)
       {
-         for (int sy = min_sy; sy <= max_sy; sy++)
+         for (sy = min_sy; sy <= max_sy; sy++)
          {
-            for (int sx = min_sx; sx < max_sx; sx++)
+            for (sx = min_sx; sx < max_sx; sx++)
             {
                if (sx == 0 && sy == 0)
                   continue;
 
-               const uint8_t *ref_prev = prev + sx + sy * c->plane_stride;
+               ref_prev = prev + sx + sy * c->plane_stride;
 
-               int sad = block_sad(ref, ref_prev, c->plane_stride);
+               sad = block_sad(ref, ref_prev, c->plane_stride);
 
                if (sad < min_sad)
                {
@@ -275,34 +281,44 @@ out:
          c->pred_error++;
          mv[0] = mv_x;
          mv[1] = mv_y;
+#if 1
+         mv[2] = RMV_BLOCK_DIRECT; // Just bang out all 128 pixels for now :(
+
+         for (int h = 0; h < RMV_BLOCK_SIZE; h++, ref += c->plane_stride)
+            for (int w = 0; w < RMV_BLOCK_SIZE; w++)
+               *comp++ = ref[w];
+         return RMV_BLOCK_SIZE * RMV_BLOCK_SIZE;
+#else
          mv[2] = RMV_BLOCK_ERROR_DIRECT; // Just bang out all 128 pixels for now :(
 
-         int sx = x + mv_x;
-         int sy = y + mv_y;
-         const uint8_t *ref_prev = prev + sx + sy * c->plane_stride;
+         sx = x + mv_x;
+         sy = y + mv_y;
+         ref_prev = prev + sx + sy * c->plane_stride;
 
          calc_block_error(comp, ref, ref_prev, c->plane_stride);
          return RMV_BLOCK_SIZE * RMV_BLOCK_SIZE;
+#endif
       }
    }
 }
 
 static void encode_inter_plane(RmvEncContext *c, const uint8_t *cur, const uint8_t *prev)
 {
-   //av_log(c->avctx, AV_LOG_INFO, "Encode inter plane ...\n");
-   *c->comp_ptr++ = 'P';
-
    int width  = c->avctx->width;
    int height = c->avctx->height;
    int bw = (width + (RMV_BLOCK_SIZE - 1)) / RMV_BLOCK_SIZE;
    int bh = (height + (RMV_BLOCK_SIZE - 1)) / RMV_BLOCK_SIZE;
+   uint8_t *mv;
+
+   //av_log(c->avctx, AV_LOG_INFO, "Encode inter plane ...\n");
+   *c->comp_ptr++ = 'P';
 
    // Motion vectors are stored right after each other. Transformed error data comes after in chunks.
    // Motion vectors are organized as:
    // mv[0] = offset in X to use as reference (signed 8-bit).
    // mv[1] = offset in Y to use as reference (signed 8-bit).
    // mv[2] = block flags. Determines entropy type of block.
-   uint8_t *mv = c->comp_ptr;
+   mv = c->comp_ptr;
 
    c->comp_ptr += bw * bh * 3;
 
@@ -330,12 +346,14 @@ static void encode_inter(RmvEncContext *c)
 static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
       const AVFrame *pict, int *got_packet)
 {
+   int ret;
+   bool keyframe;
    RmvEncContext *c = avctx->priv_data;
 
    AVFrame *p = &c->pic;
    *p         = *pict;
 
-   bool keyframe = c->frame_cnt == 0;
+   keyframe = c->frame_cnt == 0;
    c->frame_cnt++;
    if (c->frame_cnt >= c->frame_per_key)
       c->frame_cnt = 0;
@@ -364,7 +382,7 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
    if (keyframe)
       pkt->flags |= AV_PKT_FLAG_KEY;
 
-   int ret = 0;
+   ret = 0;
    if ((ret = ff_alloc_packet2(avctx, pkt, c->comp_ptr - c->comp_buf)) < 0)
       return ret;
    memcpy(pkt->data, c->comp_buf, c->comp_ptr - c->comp_buf);
