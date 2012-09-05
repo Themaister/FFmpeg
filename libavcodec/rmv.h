@@ -22,7 +22,7 @@
 #ifndef RMV_H__
 #define RMV_H__
 
-#define RMV_ME_RANGE_DEFAULT 16
+#define RMV_ME_RANGE_DEFAULT 8
 #define RMV_ME_RANGE_MAX 127
 
 #define RMV_PIX_FMT_GBRP 1
@@ -30,11 +30,11 @@
 #define RMV_FRAME_INTRA 1
 #define RMV_FRAME_INTER 2
 
-#define RMV_INTRA_PRED_UP 1
+#define RMV_INTRA_PRED_UP_RLE 1
 
 #define RMV_BLOCK_PERFECT 1
 #define RMV_BLOCK_ERROR_DIRECT 2
-#define RMV_BLOCK_ERROR_ZERO 4
+#define RMV_BLOCK_ZERO 4
 
 #endif
 

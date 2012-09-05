@@ -280,6 +280,7 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { AV_CODEC_ID_TRUEMOTION2,  MKTAG('T', 'M', '2', '0') },
     { AV_CODEC_ID_CSCD,         MKTAG('C', 'S', 'C', 'D') },
     { AV_CODEC_ID_ZMBV,         MKTAG('Z', 'M', 'B', 'V') },
+    { AV_CODEC_ID_RMV,          MKTAG('R', 'M', 'V', '0') },
     { AV_CODEC_ID_KMVC,         MKTAG('K', 'M', 'V', 'C') },
     { AV_CODEC_ID_CAVS,         MKTAG('C', 'A', 'V', 'S') },
     { AV_CODEC_ID_JPEG2000,     MKTAG('m', 'j', 'p', '2') },
