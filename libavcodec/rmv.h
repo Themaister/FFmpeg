@@ -30,6 +30,7 @@
 #define RMV_FRAME_INTRA 1
 #define RMV_FRAME_INTER 2
 
+#define RMV_INTRA_DIRECT 0
 #define RMV_INTRA_PRED_UP_RLE 1
 
 #define RMV_BLOCK_PERFECT 1

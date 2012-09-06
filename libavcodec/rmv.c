@@ -39,7 +39,15 @@ typedef struct RmvContext
    int plane_stride;
 } RmvContext;
 
-static int decode_intra_plane(RmvContext *c, uint8_t *out_buf, int out_stride, const uint8_t *buffer)
+static int decode_intra_plane_direct(RmvContext *c, uint8_t *out_buf, int out_stride, const uint8_t *buffer)
+{
+   for (int h = 0; h < c->height; h++, out_buf += out_stride, buffer += c->width)
+      memcpy(out_buf, buffer, c->width);
+
+   return c->width * c->height;
+}
+
+static int decode_intra_plane_pred_up_rle(RmvContext *c, uint8_t *out_buf, int out_stride, const uint8_t *buffer)
 {
    const uint8_t *orig_buffer = buffer;
 
@@ -56,7 +64,7 @@ static int decode_intra_plane(RmvContext *c, uint8_t *out_buf, int out_stride, c
          int run_to_edge    = FFMIN(c->width - x, run);
          int run_after_edge = run - run_to_edge;
 
-         if (run_after_edge > c->width)
+         if (run_after_edge >= c->width)
          {
             av_log(c->avctx, AV_LOG_ERROR, "Can't run over two scanlines.\n");
             return -1;
@@ -65,32 +73,30 @@ static int decode_intra_plane(RmvContext *c, uint8_t *out_buf, int out_stride, c
          if (y)
          {
             for (int i = 0; i < run_to_edge; i++)
-               out_buf[i] = out_buf[i - out_stride] + buffer[i];
+               out_buf[x + i] = out_buf[x + i - out_stride] + buffer[i];
          }
          else
-         {
-            for (int i = 0; i < run_to_edge; i++)
-               out_buf[i] = buffer[i];
-         }
+            memcpy(out_buf + x, buffer, run_to_edge);
 
          x      += run_to_edge;
          buffer += run_to_edge;
 
          if (run_after_edge)
          {
+            out_buf += out_stride;
             y++;
             x = 0;
             
-            out_buf += out_stride;
-
             for (int i = 0; i < run_after_edge; i++)
-               out_buf[i] = out_buf[i - out_stride] + buffer[i];
+               out_buf[x + i] = out_buf[x + i - out_stride] + buffer[i];
 
             buffer += run_after_edge;
             x      += run_after_edge;
          }
-         else if (x == c->width)
+
+         if (x == c->width)
          {
+            out_buf += out_stride;
             y++;
             x = 0;
          }
@@ -101,33 +107,32 @@ static int decode_intra_plane(RmvContext *c, uint8_t *out_buf, int out_stride, c
          int run_to_edge    = FFMIN(c->width - x, run);
          int run_after_edge = run - run_to_edge;
 
-         if (run_after_edge > c->width)
+         if (run_after_edge >= c->width)
          {
             av_log(c->avctx, AV_LOG_ERROR, "Can't run over two scanlines.\n");
             return -1;
          }
 
          if (y)
-            memcpy(out_buf, out_buf - out_stride, run_to_edge);
+            memcpy(out_buf + x, out_buf + x - out_stride, run_to_edge);
          else
-            memset(out_buf, 0, run_to_edge);
+            memset(out_buf + x, 0, run_to_edge);
 
          x += run_to_edge;
 
          if (run_after_edge)
          {
+            out_buf += out_stride;
             y++;
             x = 0;
-            
-            out_buf += out_stride;
 
-            for (int i = 0; i < run_after_edge; i++)
-               out_buf[i] = out_buf[i - out_stride];
-
+            memcpy(out_buf + x, out_buf + x - out_stride, run_after_edge);
             x += run_after_edge;
          }
-         else if (x == c->width)
+
+         if (x == c->width)
          {
+            out_buf += out_stride;
             y++;
             x = 0;
          }
@@ -161,17 +166,28 @@ static int rmv_decode_intra(RmvContext *c, const uint8_t *buffer)
          return -1;
       }
 
-      if (pred != RMV_INTRA_PRED_UP_RLE) // Only supported intra prediction type yet.
-         return -1;
-
       out_buf    = c->pic.data[i];
       out_stride = c->pic.linesize[i];
 
-      used = decode_intra_plane(c, out_buf, out_stride, buffer);
+      switch (pred)
+      {
+         case RMV_INTRA_DIRECT:
+            used = decode_intra_plane_direct(c, out_buf, out_stride, buffer);
+            break;
+
+         case RMV_INTRA_PRED_UP_RLE:
+            used = decode_intra_plane_pred_up_rle(c, out_buf, out_stride, buffer);
+            break;
+
+         default:
+            av_log(c->avctx, AV_LOG_ERROR, "Invalid intra prediction format.\n");
+            return -1;
+      }
+
       if (used < 0)
          return -1;
 
-      //av_log(c->avctx, AV_LOG_INFO, "Intra coded size: %d\n", 6 + used + 1);
+      //av_log(c->avctx, AV_LOG_INFO, "Intra coded size: %d\n", used);
 
       buffer_used += used;
       buffer      += used;
@@ -277,6 +293,14 @@ static int rmv_decode_inter(RmvContext *c, const uint8_t *buffer, int block_size
 
    for (int i = 0; i < c->planes_used; i++)
    {
+#if 0
+      uint8_t *out_buf = c->pic.data[i];
+      int out_stride = c->pic.linesize[i];
+      for (int h = 0; h < c->height; h++, out_buf += out_stride)
+         memset(out_buf, 0x10, c->width);
+#endif
+
+#if 1
       uint8_t *out_buf;
       int used, out_stride;
       uint8_t magic = *buffer++;
@@ -299,6 +323,7 @@ static int rmv_decode_inter(RmvContext *c, const uint8_t *buffer, int block_size
          return -1;
 
       buffer_used++;
+#endif
    }
 
    return buffer_used;
@@ -356,6 +381,8 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPac
    switch (frame_type)
    {
       case RMV_FRAME_INTRA:
+         c->pic.key_frame = 1;
+         c->pic.pict_type = AV_PICTURE_TYPE_I;
          ret = rmv_decode_intra(c, buf);
          if (ret < 0)
          {
@@ -366,6 +393,8 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPac
          break;
 
       case RMV_FRAME_INTER:
+         c->pic.key_frame = 0;
+         c->pic.pict_type = AV_PICTURE_TYPE_P;
          ret = rmv_decode_inter(c, buf, block_size);
          if (ret < 0)
          {

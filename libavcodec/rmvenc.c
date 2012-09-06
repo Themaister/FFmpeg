@@ -75,7 +75,27 @@ static void interleave_frame_bgr24(RmvEncContext *c, uint8_t **planes, const uin
    }
 }
 
-static void encode_intra_plane(RmvEncContext *c, const uint8_t *plane, uint8_t *plane_buf)
+#if 0
+static void encode_intra_plane_direct(RmvEncContext *c, const uint8_t *plane)
+{
+   int size = c->avctx->width * c->avctx->height;
+
+   *c->comp_ptr++ = 'P';
+   *c->comp_ptr++ = RMV_INTRA_DIRECT; // No compression.
+   *c->comp_ptr++ = (size >>  0) & 0xff;
+   *c->comp_ptr++ = (size >>  8) & 0xff;
+   *c->comp_ptr++ = (size >> 16) & 0xff;
+   *c->comp_ptr++ = (size >> 24) & 0xff;
+
+   for (int h = 0; h < c->avctx->height; h++,
+         c->comp_ptr += c->avctx->width, plane += c->plane_stride)
+      memcpy(c->comp_ptr, plane, c->avctx->width);
+
+   *c->comp_ptr++ = 'E';
+}
+#endif
+
+static void encode_intra_plane_pred_up_rle(RmvEncContext *c, const uint8_t *plane, uint8_t *plane_buf)
 {
    int i, len;
    size_t size;
@@ -84,8 +104,7 @@ static void encode_intra_plane(RmvEncContext *c, const uint8_t *plane, uint8_t *
    int height = c->avctx->height;
    int stride = c->plane_stride;
    uint8_t *size_buf;
-
-   uint8_t *init_comp_ptr = c->comp_ptr;
+   uint8_t *init_comp_ptr;
 
    *c->comp_ptr++ = 'P';
    *c->comp_ptr++ = RMV_INTRA_PRED_UP_RLE;
@@ -93,6 +112,8 @@ static void encode_intra_plane(RmvEncContext *c, const uint8_t *plane, uint8_t *
    // Reserve 4 bytes to use later for intra plane size encoding.
    size_buf = c->comp_ptr;
    c->comp_ptr      += 4;
+
+   init_comp_ptr = c->comp_ptr;
 
    // Very simple prediction. Assume that each pixel is equal to pixel above. Encode error.
    // Encode error data into planes_prev, as it contains useless data anyways.
@@ -121,8 +142,9 @@ static void encode_intra_plane(RmvEncContext *c, const uint8_t *plane, uint8_t *
       {
          uint8_t max_len = FFMIN(len - i, 127);
 
-         uint8_t j;
-         for (j = 0; rle_buffer[i + j] == 0 && j < max_len; j++);
+         uint8_t j = 1;
+         while (rle_buffer[i + j] == 0 && j < max_len)
+            j++;
 
          *c->comp_ptr++ = j;
          i += j;
@@ -131,9 +153,10 @@ static void encode_intra_plane(RmvEncContext *c, const uint8_t *plane, uint8_t *
       {
          uint8_t max_len = FFMIN(len - i, 127);
 
-         uint8_t j;
-         for (j = 0; rle_buffer[i + j] != 0 && j < max_len; j++);
-         
+         uint8_t j = 1;
+         while (rle_buffer[i + j] && j < max_len)
+            j++;
+
          *c->comp_ptr++ = 0x80 | j;
          memcpy(c->comp_ptr, rle_buffer + i, j);
 
@@ -145,13 +168,13 @@ static void encode_intra_plane(RmvEncContext *c, const uint8_t *plane, uint8_t *
    // Make sure that plane_prev stays pristine when it's later used as a real prev frame.
    memset(rle_buffer, 0, height * stride);
 
-   *c->comp_ptr++ = 'E';
-
    size = c->comp_ptr - init_comp_ptr; 
    *size_buf++ = (size >>  0) & 0xff;
    *size_buf++ = (size >>  8) & 0xff;
    *size_buf++ = (size >> 16) & 0xff;
    *size_buf++ = (size >> 24) & 0xff;
+
+   *c->comp_ptr++ = 'E';
 }
 
 static void encode_intra(RmvEncContext *c)
@@ -165,7 +188,10 @@ static void encode_intra(RmvEncContext *c)
    *c->comp_ptr++ = RMV_BLOCK_SIZE;
 
    for (int i = 0; i < c->planes_used; i++)
-      encode_intra_plane(c, c->planes[i], c->planes_prev[i]);
+   {
+      encode_intra_plane_pred_up_rle(c, c->planes[i], c->planes_prev[i]);
+      //encode_intra_plane_direct(c, c->planes[i]);
+   }
 }
 
 static int calc_block_sum(const uint8_t *data, int stride)
