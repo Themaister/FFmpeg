@@ -267,6 +267,27 @@ static int decode_inter_plane(RmvContext *c, uint8_t *out_buf, int out_stride, c
                for (int w = 0; w < block_size; w++)
                   dst[w] = src[w] + *blocks++; 
          }
+         else if (mv_flags & RMV_BLOCK_ERROR_INDEX)
+         {
+            unsigned indices = *blocks++;
+
+            uint8_t *dst       = out_buf + x + y * out_stride;
+            const uint8_t *src = prev + (x + mv_x) + (y + mv_y) * stride; 
+
+            for (int h = 0; h < block_size; h++, dst += out_stride, src += stride)
+               memcpy(dst, src, block_size);
+
+            dst = out_buf + x + y * out_stride;
+
+            for (unsigned i = 0; i < indices; i++)
+            {
+               uint8_t block = *blocks++;
+               unsigned w = block & 0xf;
+               unsigned h = block >> 4;
+
+               dst[w + h * out_stride] += *blocks++;
+            }
+         }
          else if (mv_flags & RMV_BLOCK_DIRECT)
          {
             uint8_t *dst = out_buf + x + y * out_stride;
@@ -354,6 +375,10 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPac
    if (buf_size < 6)
    {
       av_log(avctx, AV_LOG_ERROR, "invalid packet (got size: %d).\n", buf_size);
+
+      for (int i = 0; i < buf_size; i++)
+         av_log(avctx, AV_LOG_ERROR, "\tByte #%d: 0x%02x).\n", i, buf[i]);
+
       *data_size      = sizeof(AVFrame);
       *(AVFrame*)data = c->pic;
       return 0;

@@ -37,6 +37,7 @@
 #define RMV_BLOCK_ERROR_DIRECT 2
 #define RMV_BLOCK_ZERO 4
 #define RMV_BLOCK_DIRECT 8
+#define RMV_BLOCK_ERROR_INDEX 16
 
 #endif
 

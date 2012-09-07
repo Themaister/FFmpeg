@@ -45,6 +45,10 @@ typedef struct RmvEncContext
 
    int pred_perfect;
    int pred_error;
+   int pred_error_amt[RMV_BLOCK_SIZE * RMV_BLOCK_SIZE];
+
+   int pred_block_zero;
+   int pred_block_nonzero;
 
    uint8_t *planes[4];
    uint8_t *planes_prev[4];
@@ -110,8 +114,8 @@ static void encode_intra_plane_pred_up_rle(RmvEncContext *c, const uint8_t *plan
    *c->comp_ptr++ = RMV_INTRA_PRED_UP_RLE;
 
    // Reserve 4 bytes to use later for intra plane size encoding.
-   size_buf = c->comp_ptr;
-   c->comp_ptr      += 4;
+   size_buf     = c->comp_ptr;
+   c->comp_ptr += 4;
 
    init_comp_ptr = c->comp_ptr;
 
@@ -211,6 +215,21 @@ static void calc_block_error(uint8_t *error, const uint8_t *ref, const uint8_t *
          *error++ = ref[w] - ref_prev[w];
 }
 
+static void calc_block_error_index(uint8_t *error, const uint8_t *ref, const uint8_t *ref_prev, int stride)
+{
+   for (int h = 0; h < RMV_BLOCK_SIZE; h++, ref += stride, ref_prev += stride)
+   {
+      for (int w = 0; w < RMV_BLOCK_SIZE; w++)
+      {
+         if (ref[w] != ref_prev[w])
+         {
+            *error++ = (h << 4) | w;
+            *error++ = ref[w] - ref_prev[w];
+         }
+      }
+   }
+}
+
 #ifdef __SSE2__
 #include <emmintrin.h>
 static int block_sad(const uint8_t *ref, const uint8_t *ref_prev, int stride)
@@ -224,6 +243,19 @@ static int block_sad(const uint8_t *ref, const uint8_t *ref_prev, int stride)
 
    return sad;
 }
+
+static int block_noteq(const uint8_t *ref, const uint8_t *ref_prev, int stride)
+{
+   int err = 0;
+   __m128i zero = _mm_setzero_si128();
+   for (int h = 0; h < RMV_BLOCK_SIZE; h++, ref += stride, ref_prev += stride)
+   {
+      __m128i res = _mm_sad_epu8(_mm_cmpeq_epi8(_mm_load_si128((const __m128i*)ref), _mm_loadu_si128((const __m128i*)ref_prev)), zero);
+      err += _mm_extract_epi16(res, 0) + _mm_extract_epi16(res, 4);
+   }
+
+   return (255 * RMV_BLOCK_SIZE * RMV_BLOCK_SIZE) - err;
+}
 #else
 // TODO: GREAT assembly target :D
 static int block_sad(const uint8_t *ref, const uint8_t *ref_prev, int stride)
@@ -235,6 +267,16 @@ static int block_sad(const uint8_t *ref, const uint8_t *ref_prev, int stride)
 
    return sad;
 }
+
+static int block_noteq(const uint8_t *ref, const uint8_t *ref_prev, int stride)
+{
+   int err = 0;
+   for (int h = 0; h < RMV_BLOCK_SIZE; h++, ref += stride, ref_prev += stride)
+      for (int w = 0; w < RMV_BLOCK_SIZE; w++)
+         err += ref[w] != ref_prev[w] ? 255 : 0;
+
+   return err;
+}
 #endif
 
 static int encode_inter_block(RmvEncContext *c, uint8_t *mv, uint8_t *comp,
@@ -245,6 +287,7 @@ static int encode_inter_block(RmvEncContext *c, uint8_t *mv, uint8_t *comp,
    int y = by * RMV_BLOCK_SIZE;
    int sad;
    int sx, sy;
+   int error_amt;
 
    int min_sy = FFMAX(y - c->me_range, 0);
    int max_sy = FFMIN(y + c->me_range, c->full_height - RMV_BLOCK_SIZE);
@@ -266,7 +309,8 @@ static int encode_inter_block(RmvEncContext *c, uint8_t *mv, uint8_t *comp,
    }
    else // Motion estimate. Use very computationally simple SAD (sum absolute differences) to estimate.
    {
-      int min_sad = block_sad(ref, prev + x + y * c->plane_stride, c->plane_stride);
+      //int min_sad = block_sad(ref, prev + x + y * c->plane_stride, c->plane_stride);
+      int min_sad = block_noteq(ref, prev + x + y * c->plane_stride, c->plane_stride);
       if (min_sad)
       {
          for (sy = min_sy; sy <= max_sy; sy++)
@@ -278,7 +322,7 @@ static int encode_inter_block(RmvEncContext *c, uint8_t *mv, uint8_t *comp,
 
                ref_prev = prev + sx + sy * c->plane_stride;
 
-               sad = block_sad(ref, ref_prev, c->plane_stride);
+               sad = block_noteq(ref, ref_prev, c->plane_stride);
 
                if (sad < min_sad)
                {
@@ -307,23 +351,30 @@ out:
          c->pred_error++;
          mv[0] = mv_x;
          mv[1] = mv_y;
-#if 0
-         mv[2] = RMV_BLOCK_DIRECT; // Just bang out all 128 pixels for now :(
-
-         for (int h = 0; h < RMV_BLOCK_SIZE; h++, ref += c->plane_stride)
-            for (int w = 0; w < RMV_BLOCK_SIZE; w++)
-               *comp++ = ref[w];
-         return RMV_BLOCK_SIZE * RMV_BLOCK_SIZE;
-#else
-         mv[2] = RMV_BLOCK_ERROR_DIRECT; // Just bang out all 128 pixels for now :(
 
          sx = x + mv_x;
          sy = y + mv_y;
          ref_prev = prev + sx + sy * c->plane_stride;
 
-         calc_block_error(comp, ref, ref_prev, c->plane_stride);
-         return RMV_BLOCK_SIZE * RMV_BLOCK_SIZE;
-#endif
+         error_amt = min_sad / 255;
+
+         c->pred_block_zero += RMV_BLOCK_SIZE * RMV_BLOCK_SIZE - error_amt;
+         c->pred_block_nonzero += error_amt;
+         c->pred_error_amt[error_amt]++;
+
+         if (error_amt >= (RMV_BLOCK_SIZE * RMV_BLOCK_SIZE / 2))
+         {
+            mv[2] = RMV_BLOCK_ERROR_DIRECT; // Just bang out all 128 pixels for now :(
+            calc_block_error(comp, ref, ref_prev, c->plane_stride);
+            return RMV_BLOCK_SIZE * RMV_BLOCK_SIZE;
+         }
+         else
+         {
+            mv[2] = RMV_BLOCK_ERROR_INDEX;
+            *comp = error_amt;
+            calc_block_error_index(comp + 1, ref, ref_prev, c->plane_stride);
+            return 2 * error_amt + 1;
+         }
       }
    }
 }
@@ -388,9 +439,6 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
 
    interleave_frame_bgr24(c, c->planes, p->data[0], c->avctx->width, c->avctx->height, p->linesize[0]);
 
-   c->pred_perfect = 0;
-   c->pred_error   = 0;
-
    c->comp_ptr = c->comp_buf;
    if (keyframe)
       encode_intra(c);
@@ -407,6 +455,8 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
 
    if (keyframe)
       pkt->flags |= AV_PKT_FLAG_KEY;
+   else
+      pkt->flags &= ~AV_PKT_FLAG_KEY;
 
    ret = 0;
    if ((ret = ff_alloc_packet2(avctx, pkt, c->comp_ptr - c->comp_buf)) < 0)
@@ -427,7 +477,7 @@ static av_cold int encode_init(AVCodecContext *avctx)
 
    // First frame is always intra.
    c->frame_cnt     = 0;
-   c->frame_per_key = avctx->keyint_min;
+   c->frame_per_key = avctx->keyint_min * 100;
 
    c->me_range = FFMIN(avctx->me_range > 0 ? avctx->me_range : RMV_ME_RANGE_DEFAULT, RMV_ME_RANGE_MAX);
 
@@ -481,6 +531,18 @@ static av_cold int encode_init(AVCodecContext *avctx)
 static av_cold int encode_end(AVCodecContext *avctx)
 {
    RmvEncContext *c = avctx->priv_data;
+
+   av_log(avctx, AV_LOG_INFO, "RMV Block predictions stats: Perfect = %d, Not perfect = %d\n",
+         c->pred_perfect,
+         c->pred_error);
+
+   av_log(avctx, AV_LOG_INFO, "RMV Block prediction stats: Zero = %d, Nonzero = %d\n",
+         c->pred_block_zero,
+         c->pred_block_nonzero);
+
+   //av_log(avctx, AV_LOG_INFO, "RMV pixel error count:\n");
+   //for (int i = 0; i < RMV_BLOCK_SIZE * RMV_BLOCK_SIZE; i++)
+   //   av_log(avctx, AV_LOG_INFO, "\t%3d px: %10d\n", i, c->pred_error_amt[i]); 
 
    for (int i = 0; i < c->planes_used; i++)
    {
