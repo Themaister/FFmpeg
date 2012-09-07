@@ -232,6 +232,8 @@ static void calc_block_error_index(uint8_t *error, const uint8_t *ref, const uin
 
 #ifdef __SSE2__
 #include <emmintrin.h>
+
+#if 0
 static int block_sad(const uint8_t *ref, const uint8_t *ref_prev, int stride)
 {
    int sad = 0;
@@ -243,6 +245,7 @@ static int block_sad(const uint8_t *ref, const uint8_t *ref_prev, int stride)
 
    return sad;
 }
+#endif
 
 static int block_noteq(const uint8_t *ref, const uint8_t *ref_prev, int stride)
 {
@@ -257,7 +260,8 @@ static int block_noteq(const uint8_t *ref, const uint8_t *ref_prev, int stride)
    return (255 * RMV_BLOCK_SIZE * RMV_BLOCK_SIZE) - err;
 }
 #else
-// TODO: GREAT assembly target :D
+
+#if 0
 static int block_sad(const uint8_t *ref, const uint8_t *ref_prev, int stride)
 {
    int sad = 0;
@@ -267,6 +271,7 @@ static int block_sad(const uint8_t *ref, const uint8_t *ref_prev, int stride)
 
    return sad;
 }
+#endif
 
 static int block_noteq(const uint8_t *ref, const uint8_t *ref_prev, int stride)
 {
@@ -463,6 +468,8 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
       return ret;
    memcpy(pkt->data, c->comp_buf, c->comp_ptr - c->comp_buf);
 
+   //av_log(avctx, AV_LOG_INFO, "Packet size: %d\n", pkt->size);
+
    *got_packet = 1;
    return 0;
 }
@@ -477,7 +484,7 @@ static av_cold int encode_init(AVCodecContext *avctx)
 
    // First frame is always intra.
    c->frame_cnt     = 0;
-   c->frame_per_key = avctx->keyint_min * 100;
+   c->frame_per_key = 600;
 
    c->me_range = FFMIN(avctx->me_range > 0 ? avctx->me_range : RMV_ME_RANGE_DEFAULT, RMV_ME_RANGE_MAX);
 

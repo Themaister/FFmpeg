@@ -368,7 +368,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPac
    uint8_t frame_type, pix_type, block_size;
    int ret = 0;
    const uint8_t *buf = avpkt->data;
-   const uint8_t buf_size = avpkt->size;
+   const int buf_size = avpkt->size;
 
    RmvContext *c = avctx->priv_data;
 
