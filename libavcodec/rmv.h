@@ -22,7 +22,7 @@
 #ifndef RMV_H__
 #define RMV_H__
 
-#define RMV_ME_RANGE_DEFAULT 8
+#define RMV_ME_RANGE_DEFAULT 4
 #define RMV_ME_RANGE_MAX 127
 
 #define RMV_PIX_FMT_GBRP 1
